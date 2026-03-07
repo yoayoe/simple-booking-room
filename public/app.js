@@ -124,15 +124,22 @@ function renderCalendar() {
     cell.appendChild(numEl);
 
     if (bookings.length) {
-      const dotsEl = document.createElement('div');
-      dotsEl.className = 'booking-dots';
-      const count = Math.min(bookings.length, 4);
-      for (let i = 0; i < count; i++) {
-        const dot = document.createElement('div');
-        dot.className = 'booking-dot';
-        dotsEl.appendChild(dot);
+      const sorted = [...bookings].sort((a, b) => a.start_time.localeCompare(b.start_time));
+      const visible = sorted.slice(0, 2);
+      visible.forEach(b => {
+        const pill = document.createElement('div');
+        pill.className = 'booking-pill';
+        pill.innerHTML =
+          `<span class="pill-time">${formatTime(b.start_time)}</span>` +
+          `<span class="pill-title">${escHtml(b.title)}</span>`;
+        cell.appendChild(pill);
+      });
+      if (sorted.length > 2) {
+        const more = document.createElement('div');
+        more.className = 'booking-more';
+        more.textContent = `+${sorted.length - 2} lagi`;
+        cell.appendChild(more);
       }
-      cell.appendChild(dotsEl);
     }
 
     cell.onclick = () => selectDay(dateStr, bookings);
