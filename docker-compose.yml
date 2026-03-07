@@ -7,6 +7,8 @@ services:
       POSTGRES_DB: booking_room
       POSTGRES_USER: booking_user
       POSTGRES_PASSWORD: booking_pass
+      TZ: Asia/Jakarta
+      PGTZ: Asia/Jakarta
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -38,6 +40,7 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-}
       # Timezone untuk reminder scheduler
       TZ: Asia/Jakarta
+      NODE_TZ: Asia/Jakarta
     ports:
       - "3000:3000"
     depends_on:
