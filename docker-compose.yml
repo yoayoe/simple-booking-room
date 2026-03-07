@@ -29,6 +29,15 @@ services:
       DB_USER: booking_user
       DB_PASSWORD: booking_pass
       PORT: 3000
+      # Email (SMTP) — isi sesuai provider Anda
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_SECURE: ${EMAIL_SECURE:-false}
+      EMAIL_USER: ${EMAIL_USER:-}
+      EMAIL_PASS: ${EMAIL_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      # Timezone untuk reminder scheduler
+      TZ: Asia/Jakarta
     ports:
       - "3000:3000"
     depends_on:

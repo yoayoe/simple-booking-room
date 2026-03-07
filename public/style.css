@@ -390,6 +390,7 @@ main { max-width: 900px; margin: 0 auto; padding: 28px 20px 80px; }
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; font-size: .85rem; font-weight: 500; margin-bottom: 6px; }
 .required { color: var(--danger); }
+.field-hint { font-weight: 400; color: var(--text-muted); font-size: .8rem; }
 
 .form-group input,
 .form-group textarea,

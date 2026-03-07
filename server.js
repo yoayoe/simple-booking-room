@@ -1,6 +1,8 @@
 const express = require('express');
 const { Pool } = require('pg');
+const cron = require('node-cron');
 const path = require('path');
+const { sendConfirmation, sendReminder, isConfigured } = require('./email');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,7 +18,49 @@ const pool = new Pool({
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- Helper: check time conflict ---
+// ── DB Migration on startup ──
+async function migrate() {
+  await pool.query(`
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+  `);
+  await pool.query(`
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE;
+  `);
+  console.log('[DB] Migration complete');
+}
+
+// ── Reminder Scheduler (runs every minute) ──
+function startReminderScheduler() {
+  if (!isConfigured) {
+    console.log('[Reminder] Email not configured — scheduler disabled');
+    return;
+  }
+  cron.schedule('* * * * *', async () => {
+    try {
+      // Find bookings starting in 29–31 minutes with email and reminder not sent yet
+      const result = await pool.query(`
+        SELECT * FROM bookings
+        WHERE email IS NOT NULL
+          AND reminder_sent = FALSE
+          AND (date + start_time) BETWEEN
+            (NOW() AT TIME ZONE 'Asia/Jakarta' + INTERVAL '29 minutes') AND
+            (NOW() AT TIME ZONE 'Asia/Jakarta' + INTERVAL '31 minutes')
+      `);
+      for (const booking of result.rows) {
+        await sendReminder(booking);
+        await pool.query(
+          'UPDATE bookings SET reminder_sent = TRUE WHERE id = $1',
+          [booking.id]
+        );
+      }
+    } catch (err) {
+      console.error('[Reminder] Scheduler error:', err.message);
+    }
+  });
+  console.log('[Reminder] Scheduler started (every minute, 30min before meeting)');
+}
+
+// ── Helper: check time conflict ──
 async function hasConflict(date, startTime, endTime, excludeId = null) {
   const query = `
     SELECT id FROM bookings
@@ -61,7 +105,7 @@ app.get('/api/bookings', async (req, res) => {
 // POST /api/bookings
 app.post('/api/bookings', async (req, res) => {
   try {
-    const { title, booked_by, date, start_time, end_time, notes } = req.body;
+    const { title, booked_by, email, date, start_time, end_time, notes } = req.body;
 
     if (!title || !booked_by || !date || !start_time || !end_time) {
       return res.status(400).json({ error: 'Field wajib tidak boleh kosong' });
@@ -77,12 +121,16 @@ app.post('/api/bookings', async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO bookings (title, booked_by, date, start_time, end_time, notes)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [title, booked_by, date, start_time, end_time, notes || null]
+      `INSERT INTO bookings (title, booked_by, email, date, start_time, end_time, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [title, booked_by, email || null, date, start_time, end_time, notes || null]
     );
 
-    res.status(201).json(result.rows[0]);
+    const booking = result.rows[0];
+    res.status(201).json(booking);
+
+    // Send confirmation email (non-blocking)
+    sendConfirmation(booking);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -93,7 +141,7 @@ app.post('/api/bookings', async (req, res) => {
 app.put('/api/bookings/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, booked_by, date, start_time, end_time, notes } = req.body;
+    const { title, booked_by, email, date, start_time, end_time, notes } = req.body;
 
     if (!title || !booked_by || !date || !start_time || !end_time) {
       return res.status(400).json({ error: 'Field wajib tidak boleh kosong' });
@@ -109,16 +157,21 @@ app.put('/api/bookings/:id', async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE bookings SET title=$1, booked_by=$2, date=$3, start_time=$4, end_time=$5, notes=$6
-       WHERE id=$7 RETURNING *`,
-      [title, booked_by, date, start_time, end_time, notes || null, id]
+      `UPDATE bookings
+       SET title=$1, booked_by=$2, email=$3, date=$4, start_time=$5, end_time=$6, notes=$7, reminder_sent=FALSE
+       WHERE id=$8 RETURNING *`,
+      [title, booked_by, email || null, date, start_time, end_time, notes || null, id]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Booking tidak ditemukan' });
     }
 
-    res.json(result.rows[0]);
+    const booking = result.rows[0];
+    res.json(booking);
+
+    // Send confirmation email for update (non-blocking)
+    sendConfirmation(booking);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -142,6 +195,13 @@ app.delete('/api/bookings/:id', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+// ── Start ──
+migrate().then(() => {
+  startReminderScheduler();
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}).catch(err => {
+  console.error('Startup failed:', err);
+  process.exit(1);
 });

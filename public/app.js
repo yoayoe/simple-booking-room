@@ -261,6 +261,12 @@ function createBookingCard(b) {
           </svg>
           ${escHtml(b.booked_by)}
         </span>
+        ${b.email ? `<span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+          </svg>
+          ${escHtml(b.email)}
+        </span>` : ''}
       </div>
       ${b.notes ? `<div class="booking-card-notes">${escHtml(b.notes)}</div>` : ''}
     </div>
@@ -308,6 +314,7 @@ function openEditModal(id) {
   document.getElementById('edit-id').value = id;
   document.getElementById('f-title').value = b.title;
   document.getElementById('f-name').value = b.booked_by;
+  document.getElementById('f-email').value = b.email || '';
   document.getElementById('f-date').value = b.date.slice(0, 10);
   document.getElementById('f-start').value = b.start_time.slice(0, 5);
   document.getElementById('f-end').value = b.end_time.slice(0, 5);
@@ -324,6 +331,7 @@ async function submitBooking(e) {
   const data = {
     title: document.getElementById('f-title').value.trim(),
     booked_by: document.getElementById('f-name').value.trim(),
+    email: document.getElementById('f-email').value.trim(),
     date: document.getElementById('f-date').value,
     start_time: document.getElementById('f-start').value,
     end_time: document.getElementById('f-end').value,
