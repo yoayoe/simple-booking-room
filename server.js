@@ -1,8 +1,14 @@
 const express = require('express');
-const { Pool } = require('pg');
+const pg = require('pg');
+const { Pool } = pg;
 const cron = require('node-cron');
 const path = require('path');
 const { sendConfirmation, sendReminder, isConfigured } = require('./email');
+
+// Return DATE columns as plain "YYYY-MM-DD" strings, not Date objects
+// Without this, pg serializes dates to UTC ISO strings which causes off-by-one
+// day errors for UTC+ timezones (e.g. Jakarta UTC+7)
+pg.types.setTypeParser(1082, val => val);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
