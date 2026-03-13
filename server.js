@@ -32,7 +32,32 @@ async function migrate() {
   await pool.query(`
     ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE;
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS booking_logs (
+      id             SERIAL PRIMARY KEY,
+      action         VARCHAR(10)  NOT NULL,
+      booking_id     INTEGER      NOT NULL,
+      booking_data   JSONB        NOT NULL,
+      old_data       JSONB,
+      performed_at   TIMESTAMPTZ  DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    ALTER TABLE booking_logs ADD COLUMN IF NOT EXISTS old_data JSONB;
+  `);
   console.log('[DB] Migration complete');
+}
+
+// ── Helper: write activity log ──
+async function logAction(action, bookingId, bookingData, oldData = null) {
+  try {
+    await pool.query(
+      `INSERT INTO booking_logs (action, booking_id, booking_data, old_data) VALUES ($1, $2, $3, $4)`,
+      [action, bookingId, JSON.stringify(bookingData), oldData ? JSON.stringify(oldData) : null]
+    );
+  } catch (err) {
+    console.error('[Log] Failed to write log:', err.message);
+  }
 }
 
 // ── Reminder Scheduler (runs every minute) ──
@@ -137,6 +162,7 @@ app.post('/api/bookings', async (req, res) => {
 
     // Send confirmation email (non-blocking)
     sendConfirmation(booking);
+    logAction('CREATE', booking.id, booking);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -162,6 +188,13 @@ app.put('/api/bookings/:id', async (req, res) => {
       return res.status(409).json({ error: 'Waktu bertabrakan dengan booking yang sudah ada' });
     }
 
+    // Ambil data lama sebelum diupdate
+    const oldResult = await pool.query('SELECT * FROM bookings WHERE id=$1', [id]);
+    if (oldResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Booking tidak ditemukan' });
+    }
+    const oldBooking = oldResult.rows[0];
+
     const result = await pool.query(
       `UPDATE bookings
        SET title=$1, booked_by=$2, email=$3, date=$4, start_time=$5, end_time=$6, notes=$7, reminder_sent=FALSE
@@ -169,15 +202,12 @@ app.put('/api/bookings/:id', async (req, res) => {
       [title, booked_by, email || null, date, start_time, end_time, notes || null, id]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Booking tidak ditemukan' });
-    }
-
     const booking = result.rows[0];
     res.json(booking);
 
     // Send confirmation email for update (non-blocking)
     sendConfirmation(booking);
+    logAction('UPDATE', booking.id, booking, oldBooking);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -188,13 +218,29 @@ app.put('/api/bookings/:id', async (req, res) => {
 app.delete('/api/bookings/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query(
-      'DELETE FROM bookings WHERE id=$1 RETURNING id', [id]
-    );
-    if (result.rows.length === 0) {
+    const existing = await pool.query('SELECT * FROM bookings WHERE id=$1', [id]);
+    if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'Booking tidak ditemukan' });
     }
+    const booking = existing.rows[0];
+    await pool.query('DELETE FROM bookings WHERE id=$1', [id]);
     res.json({ message: 'Booking dihapus' });
+    logAction('DELETE', booking.id, booking);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/logs
+app.get('/api/logs', async (req, res) => {
+  try {
+    const { limit = 100, offset = 0 } = req.query;
+    const result = await pool.query(
+      `SELECT * FROM booking_logs ORDER BY performed_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

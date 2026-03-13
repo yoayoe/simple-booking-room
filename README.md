@@ -10,6 +10,7 @@ Aplikasi web sederhana untuk booking ruang rapat satu ruangan, tanpa autentikasi
 - **Validasi konflik** jadwal (tidak bisa booking waktu yang bertabrakan)
 - **Email konfirmasi** otomatis saat booking dibuat atau diubah
 - **Email reminder** 30 menit sebelum jadwal dimulai
+- **Log aktivitas** — mencatat setiap perubahan (buat, ubah, hapus) beserta detail field yang berubah
 - Data tersimpan di **PostgreSQL**
 - Timezone **Asia/Jakarta (WIB)**
 
@@ -81,16 +82,46 @@ booking-room/
 ├── docker-compose.yml   # Orchestration: app + db
 ├── Dockerfile           # Build image Node.js (Alpine + tzdata)
 ├── package.json
-├── server.js            # Express API server + reminder scheduler
+├── server.js            # Express API server, reminder scheduler, log aktivitas
 ├── email.js             # Nodemailer — konfirmasi & reminder email
 ├── .env.example         # Contoh konfigurasi email
 ├── db/
-│   └── init.sql         # Skema tabel PostgreSQL
+│   └── init.sql         # Skema tabel PostgreSQL (bookings)
 └── public/
-    ├── index.html
+    ├── index.html       # UI: kalender, agenda, log aktivitas
     ├── style.css
     └── app.js
 ```
+
+## Skema Database
+
+### Tabel `bookings`
+
+| Kolom | Tipe | Keterangan |
+|-------|------|------------|
+| `id` | SERIAL | Primary key |
+| `title` | VARCHAR(255) | Nama kegiatan |
+| `booked_by` | VARCHAR(255) | Nama pemesan |
+| `email` | VARCHAR(255) | Email pemesan (opsional) |
+| `date` | DATE | Tanggal booking |
+| `start_time` | TIME | Jam mulai |
+| `end_time` | TIME | Jam selesai |
+| `notes` | TEXT | Catatan (opsional) |
+| `reminder_sent` | BOOLEAN | Sudah dikirim reminder? |
+| `created_at` | TIMESTAMPTZ | Waktu dibuat |
+
+### Tabel `booking_logs`
+
+| Kolom | Tipe | Keterangan |
+|-------|------|------------|
+| `id` | SERIAL | Primary key |
+| `action` | VARCHAR(10) | `CREATE`, `UPDATE`, atau `DELETE` |
+| `booking_id` | INTEGER | ID booking yang terpengaruh |
+| `booking_data` | JSONB | Snapshot data booking sesudah perubahan |
+| `old_data` | JSONB | Snapshot data booking sebelum perubahan (hanya `UPDATE`) |
+| `performed_at` | TIMESTAMPTZ | Waktu aksi dilakukan |
+
+> Tabel `booking_logs` dibuat otomatis saat server pertama kali dijalankan (migrasi di startup).
 
 ## API Endpoints
 
@@ -100,6 +131,7 @@ booking-room/
 | POST | `/api/bookings` | Buat booking baru |
 | PUT | `/api/bookings/:id` | Update booking |
 | DELETE | `/api/bookings/:id` | Hapus booking |
+| GET | `/api/logs` | Ambil log aktivitas (opsional: `?limit=100&offset=0`) |
 
 ### Contoh payload POST/PUT
 
@@ -114,6 +146,23 @@ booking-room/
   "notes": "Bawa laptop masing-masing"
 }
 ```
+
+### Contoh response GET /api/logs
+
+```json
+[
+  {
+    "id": 3,
+    "action": "UPDATE",
+    "booking_id": 5,
+    "booking_data": { "title": "Rapat Bulanan", "booked_by": "Budi", ... },
+    "old_data":     { "title": "Rapat Harian",  "booked_by": "Budi", ... },
+    "performed_at": "2026-03-13T09:30:00+07:00"
+  }
+]
+```
+
+> Field `old_data` hanya terisi untuk aksi `UPDATE`. Untuk `CREATE` dan `DELETE` nilainya `null`.
 
 ## Environment Variables
 

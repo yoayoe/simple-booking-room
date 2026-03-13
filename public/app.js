@@ -61,9 +61,12 @@ function switchView(view) {
   document.getElementById(`view-${view}`).classList.add('active');
   document.getElementById('btn-calendar').classList.toggle('active', view === 'calendar');
   document.getElementById('btn-list').classList.toggle('active', view === 'list');
+  document.getElementById('btn-log').classList.toggle('active', view === 'log');
 
   if (view === 'list') {
     loadBookings().then(renderList);
+  } else if (view === 'log') {
+    renderLog();
   }
 }
 
@@ -403,6 +406,83 @@ async function confirmDelete() {
     if (currentView === 'list') renderList();
   } catch {
     closeConfirm();
+  }
+}
+
+// ── Log ──
+const LOG_FIELD_LABELS = {
+  title: 'Nama Kegiatan',
+  booked_by: 'Dipesan Oleh',
+  email: 'Email',
+  date: 'Tanggal',
+  start_time: 'Jam Mulai',
+  end_time: 'Jam Selesai',
+  notes: 'Catatan',
+};
+
+function buildDiffHtml(oldData, newData) {
+  if (!oldData) return '';
+  const fields = Object.keys(LOG_FIELD_LABELS);
+  const changed = fields.filter(f => {
+    const oldVal = (oldData[f] ?? '').toString().trim();
+    const newVal = (newData[f] ?? '').toString().trim();
+    return oldVal !== newVal;
+  });
+  if (!changed.length) return '<div class="log-diff-none">Tidak ada perubahan data</div>';
+
+  return changed.map(f => {
+    const label = LOG_FIELD_LABELS[f];
+    const from = escHtml((oldData[f] ?? '') === '' || oldData[f] === null ? '(kosong)' : String(oldData[f]));
+    const to   = escHtml((newData[f] ?? '') === '' || newData[f] === null ? '(kosong)' : String(newData[f]));
+    return `<div class="log-diff-row">
+      <span class="log-diff-label">${label}</span>
+      <span class="log-diff-from">${from}</span>
+      <span class="log-diff-arrow">→</span>
+      <span class="log-diff-to">${to}</span>
+    </div>`;
+  }).join('');
+}
+
+async function renderLog() {
+  const container = document.getElementById('log-list');
+  container.innerHTML = '<div class="empty-state"><p>Memuat log...</p></div>';
+  try {
+    const res = await fetch('/api/logs');
+    const logs = await res.json();
+
+    if (!logs.length) {
+      container.innerHTML = '<div class="empty-state"><p>Belum ada aktivitas tercatat</p></div>';
+      return;
+    }
+
+    const actionLabel = { CREATE: 'Dibuat', UPDATE: 'Diubah', DELETE: 'Dihapus' };
+    const actionClass = { CREATE: 'log-create', UPDATE: 'log-update', DELETE: 'log-delete' };
+
+    container.innerHTML = '';
+    logs.forEach(log => {
+      const d = log.booking_data;
+      const date = new Date(log.performed_at);
+      const timeStr = date.toLocaleString('id-ID', {
+        day: 'numeric', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+
+      const diffHtml = log.action === 'UPDATE' ? buildDiffHtml(log.old_data, d) : '';
+
+      const row = document.createElement('div');
+      row.className = 'log-row' + (diffHtml ? ' log-row-expandable' : '');
+      row.innerHTML = `
+        <div class="log-badge ${actionClass[log.action]}">${actionLabel[log.action] || log.action}</div>
+        <div class="log-info">
+          <div class="log-title">${escHtml(d.title)} <span class="log-by">oleh ${escHtml(d.booked_by)}</span></div>
+          <div class="log-meta">${escHtml(d.date)} &nbsp;${formatTime(d.start_time)}–${formatTime(d.end_time)} &nbsp;·&nbsp; ID #${log.booking_id}</div>
+          ${diffHtml ? `<div class="log-diff">${diffHtml}</div>` : ''}
+        </div>
+        <div class="log-time">${timeStr}</div>`;
+      container.appendChild(row);
+    });
+  } catch {
+    container.innerHTML = '<div class="empty-state"><p>Gagal memuat log</p></div>';
   }
 }
 
